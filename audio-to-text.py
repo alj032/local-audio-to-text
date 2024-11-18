@@ -482,7 +482,7 @@ class HotkeyDialog(tk.Toplevel):
         
         self.current_hotkey = current_hotkey
         self.on_save = on_save
-        self.result = None
+        self.pressed_keys = set()
         
         self.setup_ui()
         
@@ -503,10 +503,13 @@ class HotkeyDialog(tk.Toplevel):
         ttk.Button(frame, text="Clear", command=self.clear_hotkey).grid(row=2, column=0, pady=10)
         ttk.Button(frame, text="Save", command=self.save_hotkey).grid(row=2, column=1, pady=10)
         
-        self.bind('<Key>', self.on_key)
+        # Bind both key press and release events
+        self.bind('<KeyPress>', self.on_key_press)
+        self.bind('<KeyRelease>', self.on_key_release)
         
     def clear_hotkey(self):
         self.hotkey_var.set("")
+        self.pressed_keys.clear()
         
     def save_hotkey(self):
         hotkey = self.hotkey_var.get()
@@ -514,21 +517,74 @@ class HotkeyDialog(tk.Toplevel):
             self.on_save(hotkey)
             self.destroy()
     
-    def on_key(self, event):
+    def on_key_press(self, event):
+        # Ignore special events
         if event.keysym in ('Escape', 'Return', 'Tab'):
             return
             
-        mods = []
-        if event.state & 0x4:
-            mods.append('ctrl')
-        if event.state & 0x1:
-            mods.append('shift')
-        if event.state & 0x8:
-            mods.append('alt')
-            
+        # Convert keysym to lowercase for consistency
         key = event.keysym.lower()
-        hotkey = '+'.join(mods + [key])
-        self.hotkey_var.set(hotkey)
+        
+        # Map modifier keys to their standard names
+        modifier_map = {
+            'control_l': 'ctrl',
+            'control_r': 'ctrl',
+            'shift_l': 'shift',
+            'shift_r': 'shift',
+            'alt_l': 'alt',
+            'alt_r': 'alt'
+        }
+        
+        # Convert modifier keys to their standard names
+        if key in modifier_map:
+            key = modifier_map[key]
+            
+        # Add the key to pressed keys
+        self.pressed_keys.add(key)
+        
+        # Update the hotkey display
+        self.update_hotkey_display()
+    
+    def on_key_release(self, event):
+        key = event.keysym.lower()
+        
+        # Map modifier keys to their standard names
+        modifier_map = {
+            'control_l': 'ctrl',
+            'control_r': 'ctrl',
+            'shift_l': 'shift',
+            'shift_r': 'shift',
+            'alt_l': 'alt',
+            'alt_r': 'alt'
+        }
+        
+        if key in modifier_map:
+            key = modifier_map[key]
+            
+        # Remove the key from pressed keys
+        self.pressed_keys.discard(key)
+        
+        # Update the hotkey display
+        self.update_hotkey_display()
+    
+    def update_hotkey_display(self):
+        # Sort keys to ensure consistent order (modifiers first)
+        modifier_order = {'ctrl': 0, 'shift': 1, 'alt': 2}
+        
+        # Separate modifiers and regular keys
+        modifiers = sorted(
+            [k for k in self.pressed_keys if k in modifier_order],
+            key=lambda x: modifier_order[x]
+        )
+        other_keys = [k for k in self.pressed_keys if k not in modifier_order]
+        
+        # Combine all keys in the correct order
+        all_keys = modifiers + other_keys
+        
+        if all_keys:
+            # Join all keys with '+'
+            hotkey = '+'.join(all_keys)
+            self.hotkey_var.set(hotkey)
 
 def main():
     app = WhisperTranscriberApp()
