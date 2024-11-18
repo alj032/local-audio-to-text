@@ -21,10 +21,13 @@ import json
 
 class WhisperTranscriberApp:
     def __init__(self):
+        self.status_queue = queue.Queue()
+        
         # Define default config first
         self.default_config = {
             'start_hotkey': 'ctrl+shift+r',
-            'stop_hotkey': 'ctrl+shift+s'
+            'stop_hotkey': 'ctrl+shift+s',
+            'start_minimized': True
         }
         
         # Set up config file path
@@ -39,6 +42,23 @@ class WhisperTranscriberApp:
         self.create_window()
         self.setup_hotkeys()
         
+        # If start_minimized is enabled, start hidden
+        if self.config.get('start_minimized', True):
+            self.window.withdraw()
+
+    def check_status_queue(self):
+        """Check for status updates and schedule the next check"""
+        try:
+            while True:  # Process all available messages
+                status_message = self.status_queue.get_nowait()
+                self.status_var.set(status_message)
+        except queue.Empty:
+            pass
+        finally:
+            # Schedule the next check
+            if self.window:  # Check if window still exists
+                self.window.after(100, self.check_status_queue)
+        
     def setup_variables(self):
         # Initialize variables
         self.recording = False
@@ -50,18 +70,26 @@ class WhisperTranscriberApp:
         self.window = None
         self.animation = None
         self.line = None
-        self.stream = None  # Add stream variable to track active audio stream
-        
+        self.stream = None
+
         # Audio visualization variables
         self.buffer_size = 2000
         self.audio_data_display = np.zeros(self.buffer_size)
         self.plot_data = np.zeros(self.buffer_size)
         
-        # Model settings - simplified for faster-whisper
+        # Updated model settings with all available models
         self.models = {
-            "Tiny (fast, less accurate)": "tiny",
-            "Base (balanced)": "base",
-            "Small (accurate, slower)": "small"
+            "Tiny (fastest, least accurate)": "tiny",
+            "Tiny.en (English optimized)": "tiny.en",
+            "Base (fast, balanced)": "base",
+            "Base.en (English optimized)": "base.en",
+            "Small (balanced)": "small",
+            "Small.en (English optimized)": "small.en",
+            "Medium (accurate)": "medium",
+            "Medium.en (English optimized)": "medium.en",
+            "Large-v1 (most accurate, slowest)": "large-v1",
+            "Large-v2 (most accurate, newest)": "large-v2",
+            "Large-v3 (latest, most accurate)": "large-v3",
         }
         self.current_model = None
         self.model = None
@@ -70,16 +98,30 @@ class WhisperTranscriberApp:
         self.audio_devices = self.get_audio_devices()
 
     def load_config(self):
+        """Load config from file, merging with defaults for any missing keys"""
         try:
-            with open(self.config_file, 'r') as f:
-                self.config = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    stored_config = json.load(f)
+                # Merge stored config with defaults, keeping stored values but adding any missing keys
+                self.config = self.default_config.copy()
+                self.config.update(stored_config)
+            else:
+                self.config = self.default_config.copy()
+            # Always save after loading to ensure file exists with all current settings
+            self.save_config()
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"Error loading config: {e}")
             self.config = self.default_config.copy()
             self.save_config()
             
     def save_config(self):
-        with open(self.config_file, 'w') as f:
-            json.dump(self.config, f)
+        """Save current config to file"""
+        try:
+            with open(self.config_file, 'w') as f:
+                json.dump(self.config, f)
+        except OSError as e:
+            print(f"Error saving config: {e}")
             
     def setup_hotkeys(self):
         # Remove any existing hotkeys
@@ -110,22 +152,50 @@ class WhisperTranscriberApp:
         return input_devices
 
     def create_tray_icon(self):
-        icon_size = 64
-        icon_image = Image.new('RGB', (icon_size, icon_size), color='white')
-        draw = ImageDraw.Draw(icon_image)
-        draw.ellipse([4, 4, icon_size-4, icon_size-4], fill='blue')
+        # Create the initial icon (not recording - blue)
+        self.create_tray_icon_image('blue')
         
         menu = (
-            pystray.MenuItem("Show", self.show_window),
+            pystray.MenuItem("Show/Hide", self.toggle_window),
+            pystray.MenuItem("Start Minimized", 
+                           lambda item: self.toggle_start_minimized(item), 
+                           checked=lambda item: self.config['start_minimized']),
             pystray.MenuItem("Exit", self.quit_application)
         )
         
-        self.tray_icon = pystray.Icon("whisper_transcriber", icon_image, "Whisper Transcriber", menu)
+        self.tray_icon = pystray.Icon("whisper_transcriber", self.icon_image, "Whisper Transcriber", menu)
 
+    def create_tray_icon_image(self, color):
+        icon_size = 64
+        self.icon_image = Image.new('RGB', (icon_size, icon_size), color='white')
+        draw = ImageDraw.Draw(self.icon_image)
+        
+        # Map color names to RGB values
+        colors = {
+            'blue': (0, 0, 255),    # Not recording
+            'red': (255, 0, 0)      # Recording
+        }
+        
+        draw.ellipse([4, 4, icon_size-4, icon_size-4], fill=colors[color])
+
+    def toggle_start_minimized(self, item):
+        self.config['start_minimized'] = not self.config['start_minimized']
+        self.save_config()
+
+    def toggle_window(self):
+        if self.window.state() == 'withdrawn':
+            self.window.deiconify()
+            self.window.lift()
+        else:
+            self.window.withdraw()
+    
     def create_window(self):
         self.window = tk.Tk()
         self.window.title("Whisper Transcriber")
         self.window.protocol('WM_DELETE_WINDOW', self.hide_window)
+        
+        # Start checking the status queue
+        self.window.after(100, self.check_status_queue)
         
         self.setup_ui()
     
@@ -133,11 +203,17 @@ class WhisperTranscriberApp:
         main_frame = ttk.Frame(self.window, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # Model selection
+        # Model selection with tooltip
         ttk.Label(main_frame, text="Select Model:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.model_var = tk.StringVar(value="Tiny (fast, less accurate)")
+        self.model_var = tk.StringVar(value="Base (fast, balanced)")
         model_dropdown = ttk.Combobox(main_frame, textvariable=self.model_var, values=list(self.models.keys()))
         model_dropdown.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5)
+        
+        # Add tooltip button next to model selection
+        tooltip_button = ttk.Button(main_frame, text="?", width=2,
+                                  command=self.show_model_info)
+        tooltip_button.grid(row=0, column=2, padx=5, pady=5)
+        
         model_dropdown.bind('<<ComboboxSelected>>', self.on_model_change)
         
         # Audio device selection
@@ -193,6 +269,33 @@ class WhisperTranscriberApp:
         # Reset hotkeys button
         ttk.Button(hotkeys_frame, text="Reset to Defaults", 
                   command=self.reset_hotkeys).grid(row=2, column=0, columnspan=3, pady=5)
+
+    def show_model_info(self):
+        info = """Model Information:
+        
+            Tiny/Tiny.en: Fastest, lowest memory usage, least accurate
+            - Good for: Quick transcriptions where perfect accuracy isn't critical
+            - Memory: ~1GB
+
+            Base/Base.en: Good balance of speed and accuracy
+            - Good for: General purpose transcription
+            - Memory: ~1.5GB
+
+            Small/Small.en: Better accuracy, still reasonably fast
+            - Good for: Most everyday transcription needs
+            - Memory: ~2GB
+
+            Medium/Medium.en: High accuracy, slower processing
+            - Good for: When accuracy is important and time isn't critical
+            - Memory: ~5GB
+
+            Large-v1/v2/v3: Highest accuracy, slowest processing
+            - Good for: When maximum accuracy is required
+            - Memory: ~10GB
+
+            Note: '.en' models are optimized for English and may perform better for English-only content."""
+
+        messagebox.showinfo("Model Information", info)
     
     def set_hotkey(self, hotkey_type):
         current = self.config[hotkey_type]
@@ -271,17 +374,23 @@ class WhisperTranscriberApp:
     def on_model_change(self, event):
         model_name = self.models[self.model_var.get()]
         if model_name != self.current_model:
-            self.status_var.set("Loading model...")
-            self.window.update()
+            self.status_queue.put("Loading model...")
             
             def load_model():
                 try:
+                    # Check system memory before loading large models
+                    if model_name.startswith("large"):
+                        import psutil
+                        available_memory = psutil.virtual_memory().available / (1024 * 1024 * 1024)  # Convert to GB
+                        if available_memory < 12:  # Need at least 12GB free for large models
+                            self.status_queue.put("Warning: Limited memory available. Model may run slowly.")
+                    
                     # Using faster-whisper which handles model downloads better
                     self.model = faster_whisper.WhisperModel(model_name, device="cpu", compute_type="int8")
                     self.current_model = model_name
-                    self.status_var.set("Model loaded successfully")
+                    self.status_queue.put("Model loaded successfully")
                 except Exception as e:
-                    self.status_var.set(f"Error loading model: {str(e)}")
+                    self.status_queue.put(f"Error loading model: {str(e)}")
             
             threading.Thread(target=load_model).start()
 
@@ -311,6 +420,10 @@ class WhisperTranscriberApp:
         self.record_button.config(text="Stop Recording")
         self.status_var.set("Recording...")
         
+        # Update tray icon to red
+        self.create_tray_icon_image('red')
+        self.tray_icon.icon = self.icon_image
+        
         # Reset visualization
         self.plot_data = np.zeros(self.buffer_size)
         self.line.set_ydata(self.plot_data)
@@ -327,7 +440,7 @@ class WhisperTranscriberApp:
         # Start recording
         self.recording_thread = threading.Thread(target=self.record_audio)
         self.recording_thread.start()
-    
+
     def stop_recording(self):
         if not self.recording:
             return
@@ -335,6 +448,10 @@ class WhisperTranscriberApp:
         self.recording = False
         self.record_button.config(text="Start Recording")
         self.status_var.set("Processing audio...")
+        
+        # Update tray icon back to blue
+        self.create_tray_icon_image('blue')
+        self.tray_icon.icon = self.icon_image
         
         # Stop the animation
         if self.animation:
@@ -416,13 +533,20 @@ class WhisperTranscriberApp:
                 segments, _ = self.model.transcribe(temp_file.name)
                 text = " ".join([segment.text for segment in segments]).strip()
                 
-                self.text_output.delete(1.0, tk.END)
-                self.text_output.insert(tk.END, text)
+                # Update text and copy to clipboard in a single operation
+                def update_ui():
+                    self.text_output.delete(1.0, tk.END)
+                    self.text_output.insert(tk.END, text)
+                    
+                    # Only copy after text is fully inserted
+                    if self.auto_copy_var.get():
+                        pyperclip.copy(text)
+                        self.status_var.set("Transcription complete and copied to clipboard")
+                    else:
+                        self.status_var.set("Transcription complete")
                 
-                if self.auto_copy_var.get():
-                    self.copy_to_clipboard()
-                
-                self.status_var.set("Transcription complete")
+                # Ensure UI updates happen in the main thread
+                self.window.after(0, update_ui)
             
             Path(temp_file.name).unlink()
             
