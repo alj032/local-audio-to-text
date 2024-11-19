@@ -1264,19 +1264,6 @@ def main():
     cleanup_temp_files()
     
     try:
-
-        
-        # More resilient admin check
-        if sys.platform == 'win32':
-            try:
-                if not is_admin():
-                    logging.warning("Running without admin privileges - some features may be limited")
-            except Exception as e:
-                logging.warning(f"Could not check admin status: {e}")
-    except Exception as e:
-        logging.warning(f"Error checking platform/admin status: {e}")
-    
-    try:
         app = WhisperTranscriberApp()
         app.run()
     except Exception as e:
