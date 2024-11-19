@@ -8,6 +8,41 @@ A python gui interface built around the whisper transcription allows you to star
 - [ ] Make script add to startup?
 - [ ] Move python to separate files
 
+# Setting Up the Virtual Environment and Installing Dependencies
+
+# Project Setup Guide
+
+## Setting up a Virtual Environment
+
+### Prerequisites
+- Python 3.x installed on your system
+- pip (Python package installer)
+
+### Create and Activate Virtual Environment
+
+#### On Windows
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate virtual environment
+venv\Scripts\activate
+
+# Mac/Linux
+# Create virtual environment
+python3 -m venv venv
+
+# Activate virtual environment
+source venv/bin/activate
+
+# Install Requirements
+Once the virtual environment is activated, install the project dependencies:
+```bash
+pip install -r requirements.txt
+
+deactivate
+
+
 
 # Main program
 ![App Screenshot](Images/app_screenshot.png)
