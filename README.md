@@ -1,5 +1,13 @@
 # local-audio-to-text
-A python program with a gui interface that allows you to start/stop audio recording and automatically copies to clipboard when complete. Also has hot keys
+A python gui interface built around the whisper transcription allows you to start/stop audio recording and automatically copies to clipboard when complete. Configurable hot keys, ability to import audio files and videos (videos seems broken atm).
+
+
+## To-Do List
+
+- [ ] Figure out why video doesn't work
+- [ ] Make script add to startup?
+- [ ] Move python to separate files
+
 
 # Main program
 ![App Screenshot](Images/app_screenshot.png)
